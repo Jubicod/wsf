@@ -13,13 +13,13 @@ def parsehex(s):
     if s[0] == 'b':
         n = 1
     for i in range(0,n*2,2)[::-1]:
-        o += bytearray(chr(int(s[i+1:i+3],16)))
+        o += chr(int(s[i+1:i+3],16))
     return o + parseascii(s[1+n*2:])
 
 def parseascii(s):
     o = ''
     t = s.split('\\',1)
-    o += bytearray(t[0])
+    o += t[0]
     if len(t) == 2:
         return o + parsehex(t[1])
     else: 
@@ -30,7 +30,7 @@ def parseascii(s):
 if len(sys.argv) > 1:  
     out = ''    
     for a in sys.argv[1:]:
-        out += parseascii(a) + bytearray('\x0a')
+        out += parseascii(a) + '\x0a'
     print(out)
 else:
     print('tobin.py string1 string2 ...')
