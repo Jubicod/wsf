@@ -92,14 +92,14 @@ Let's do the same but with device unlocked:
 <r.
 <50
 <ok
-<w.
-<error
+<w.0
+<ok
 <i.
 <error
 
 Since read are allowed, you can read the value of the first digit (50="2").
-You can guess the value of the second digit. It has only READ access rights. So it's 4 least significant bits are 0x1.
-Since it's a digit, it must be 0x31 ("1").
+You can guess the value of the second digit. It has only READ and WRITE access rights. So it's 4 least significant bits are 0x3.
+Since it's a digit, it must be 0x33 ("3").
 
 Now we can do the same for slot -1:
 No access rights when device is locked, but when device is unlocked:
