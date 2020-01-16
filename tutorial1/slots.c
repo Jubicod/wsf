@@ -99,15 +99,15 @@ static unsigned char slot_read(int slot)
 unsigned int recursive_write_digit(unsigned char* value_ascii, unsigned int value_len, unsigned int index)
 {
   unsigned int value;
-  if(index < (value_len-1))
+  if(index > 0)
   {
     /* not yet reached the last digit */
-    value = recursive_write_digit(value_ascii, value_len, index+1)*10 + value_ascii[index] - '0';
+    value = recursive_write_digit(value_ascii, value_len, index-1)*10 + (value_ascii[index] - '0');
   }
   else
   {
     /* this is the last digit */
-    return value_ascii[index] - '0';
+    value = value_ascii[index] - '0';
   }  
   return value;
 }
@@ -117,7 +117,7 @@ void slot_write(int slot, unsigned char* value_ascii, unsigned int value_len)
 	if(is_slot_ok(slot, ACCESS_W))
 	{
 			//int i;
-      info.slot[slot].value = recursive_write_digit(value_ascii, value_len, 0);
+      info.slot[slot].value = recursive_write_digit(value_ascii, value_len, value_len - 1);
       /*
 			for(i=0;i<value_len;i++)
 				info.slot[slot].value = info.slot[slot].value*10 + value_ascii[i] - '0';*/
