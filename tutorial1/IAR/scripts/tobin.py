@@ -27,15 +27,24 @@ def parseascii(s):
     else: 
         return o
 
-    
+if sys.argv[0] == '-o':
+    outfile = s
+
     
 if len(sys.argv) > 1:  
     out = ''    
     for a in sys.argv[1:]:
         out += parseascii(a) + '\x0a'
+    
+    with open('temp.bin','wb') as f:
+        if sys.version_info.major == 3:
+            f.write(out.encode('charmap'))
+        else:
+            f.write(out)
+     
     print(out)
 else:
-    print('tobin.py string1 string2 ...')
+    print('tobin.py [-o file] string1 string2 ...')
     print('convert and concatenate ascii strings to one single binary string')
     print('special characters:')
     print('  \\b : following two characters are converted into a byte')
