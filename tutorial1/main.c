@@ -2,12 +2,18 @@
 #include "slot.h"
 #include "com.h"
 
+/*
+int putc(int c, FILE* f)
+{
+   return c;
+}
+*/
+
 int32_t receive_char()
 { 
 	  int32_t c = getchar();
 		return c;
 }
-
 
 void receive_command(unsigned char* com, unsigned int* len)
 {

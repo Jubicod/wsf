@@ -194,6 +194,7 @@ g_pfnVectors:
 	.word	0
 	.word	BootRAM        /* @0x108. This is for boot in RAM mode for
                           STM32F10x Low Density devices.*/
+  .word 0
 
 /*******************************************************************************
 *
