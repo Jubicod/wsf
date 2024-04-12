@@ -5,7 +5,7 @@ ARMOBJDUMP = arm-none-eabi-objdump
 all: app.elf app.txt app.map
 
 app.elf: startup_stm32f10x_ld.s main.c slots.c 
-	$(ARMGCC) -O1 -g -march=armv7-m $^ --specs=nano.specs --specs=nosys.specs -T stm32_flash.ld -o $@
+	$(ARMGCC) -O1 -g -march=armv7-m $^ --specs=nosys.specs -T stm32_flash.ld -o $@
 
 app.txt: app.elf
 	$(ARMOBJDUMP) -S $^ > $@
