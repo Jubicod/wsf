@@ -2,13 +2,6 @@
 #include "slot.h"
 #include "com.h"
 
-/*
-int putc(int c, FILE* f)
-{
-   return c;
-}
-*/
-
 int32_t receive_char()
 { 
 	  int32_t c = getchar();
@@ -17,16 +10,16 @@ int32_t receive_char()
 
 void receive_command(unsigned char* com, unsigned int* len)
 {
-	unsigned int i = 0;
-	unsigned char c;
-	do
-	{
-		c = receive_char();
-		if (c != ' ') com[i] = c;
-		i++;
-	}	while(c != ' ');
-  com[i-1] = 0; // add terminal zero
-	*len = i-1;
+  unsigned int i = 0;
+  unsigned char c;
+  /* receive length */
+  *len = (unsigned int)receive_char();
+  /* receive command */
+  for(i=0;i<*len;i++)
+  {
+    c = receive_char();
+  }
+  com[i] = 0; // add terminal zero
   printf((char const*)com); /* echo command */
   printf("\n");
 }
