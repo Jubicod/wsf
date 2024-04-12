@@ -11,13 +11,12 @@ int32_t receive_char()
 void receive_command(unsigned char* com, unsigned int* len)
 {
   unsigned int i = 0;
-  unsigned char c;
   /* receive length */
   *len = (unsigned int)receive_char();
   /* receive command */
   for(i=0;i<*len;i++)
   {
-    c = receive_char();
+    com[i] = receive_char();
   }
   com[i] = 0; // add terminal zero
   printf((char const*)com); /* echo command */
