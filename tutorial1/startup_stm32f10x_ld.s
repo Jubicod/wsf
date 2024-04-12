@@ -65,8 +65,8 @@ Reset_Handler:
 
 /* Copy the data segment initializers from flash to SRAM */
   movs	r1, #0
-  b	LoopCopyDataInit
-
+  /* b	LoopCopyDataInit */
+     b Next
 CopyDataInit:
 	ldr	r3, =_sidata
 	ldr	r3, [r3, r1]
@@ -82,6 +82,7 @@ LoopCopyDataInit:
 	ldr	r2, =_sbss
 	b	LoopFillZerobss
 /* Zero fill the bss segment. */
+Next:
 FillZerobss:
 	movs	r3, #0
 	str	r3, [r2], #4
@@ -96,7 +97,7 @@ LoopFillZerobss:
 /* Call static constructors */
   bl __libc_init_array
 /* Call the application's entry point.*/
-	bl	main
+	bl      main	
 	bx	lr
 .size	Reset_Handler, .-Reset_Handler
 
