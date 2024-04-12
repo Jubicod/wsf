@@ -22,9 +22,9 @@ void receive_command(unsigned char* com, unsigned int* len)
 	do
 	{
 		c = receive_char();
-		if (c != 0xA) com[i] = c;
+		if (c != ' ') com[i] = c;
 		i++;
-	}	while(c != 0xA);
+	}	while(c != ' ');
   com[i-1] = 0; // add terminal zero
 	*len = i-1;
   printf((char const*)com); /* echo command */
