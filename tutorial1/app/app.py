@@ -6,10 +6,13 @@ class Printf:
 
   def __init__(self, emu):
     self.emu = emu
+  
+  def parse(self):
     self.param = 0
     self.sp = self.emu.reg_read(uc.arm_const.UC_ARM_REG_SP)
     r0 = self.emu.reg_read(uc.arm_const.UC_ARM_REG_R0)
     format = self.get_string(r0)
+    s = ''
     i = 0
     while i < len(format):
       if format[i]=='%' and i < (len(format)-1):
@@ -17,18 +20,19 @@ class Printf:
         t = format[i]
         n = self.next_param()
         if t=='s':
-          print(self.get_string(n), end='')
+          s += self.get_string(n)
         elif t=='c':
-          print(chr(n & 0xff), end='')
+          s += chr(n & 0xff)
         elif t=='d':
-          print(str(n), end='')
+          s += str(n)
         elif t=='x' or t=='p':
-          print(hex(n), end='')
+          s += hex(n)
         else:
-          print(format[i-1:i+1], end='')
+          s += format[i-1:i+1]
       else:
-        print(format[i], end='')
+        s += format[i]
       i+=1
+    return s
 
   def next_param(self):
     if self.param == 0:
@@ -159,18 +163,22 @@ class App:
 
   def hook_puts(self, emu, address, size, user_data):
     r0 = emu.reg_read(uc.arm_const.UC_ARM_REG_R0)
+    s = ''
     while(1):
       c = emu.mem_read(r0,1)[0]
       if c==0:
         break
       r0 += 1
-      print(chr(c), end='')
-    print('')
+      s += chr(c)
+    print(s)
+    self.answer += s
     self.ret()
 
   def hook_putchar(self, emu, address, size, user_data):
     r0 = emu.reg_read(uc.arm_const.UC_ARM_REG_R0)
-    print(chr(r0 & 0xff), end='')
+    c = chr(r0 & 0xff)
+    print(c, end='')
+    self.answer += c
     self.ret()
 
 
@@ -196,7 +204,9 @@ class App:
     self.ret()
 
   def hook_printf(self, emu, address, size, user_data):
-    Printf(emu)
+    a = Printf(emu).parse()
+    print(a)
+    self.answer += a 
     self.ret()
 
 
@@ -217,6 +227,7 @@ class App:
 
   def send(self, *args, timeout=1):
     command = b''
+    self.answer = ''
     for arg in args:
       if isinstance(arg, int):
         command += arg.to_bytes(4, 'little')
@@ -238,3 +249,6 @@ class App:
       print('PC =', hex(self.emu.reg_read(uc.arm_const.UC_ARM_REG_PC)))
     return self.ins_counter
 
+  def get_answer(self):
+    return self.answer
+  
