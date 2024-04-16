@@ -138,10 +138,15 @@ void slot_increment(int slot)
 void slot_unlock(unsigned char* pw, int size)
 {
   if(memcmp(info.password, pw, sizeof(info.password)) == 0)
+  {
     unlock();
+    clear_error();
+  }
   else
+  {
     lock();
-  clear_error();
+    set_error();
+  }
 }
 
 unsigned char get_access_symbol(unsigned char slotr, unsigned type, unsigned char symbol)
