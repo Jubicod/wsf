@@ -241,6 +241,7 @@ class App:
     self.ins_counter = 0
     try:
       self.emu.emu_start(self.emu.reg_read(uc.arm_const.UC_ARM_REG_PC)|1, 0x08000295, timeout=timeout*1000000)
+      self.ins_counter = 'timeout'
     except NameError:
       pass
     except uc.UcError as e:
