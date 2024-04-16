@@ -26,7 +26,7 @@ class Printf:
         elif t=='d':
           s += str(n)
         elif t=='x' or t=='p':
-          s += hex(n)
+          s += hex(n)[2:]
         else:
           s += format[i-1:i+1]
       else:
@@ -205,7 +205,7 @@ class App:
 
   def hook_printf(self, emu, address, size, user_data):
     a = Printf(emu).parse()
-    print(a)
+    print(a, end='')
     self.answer += a 
     self.ret()
 
@@ -252,3 +252,15 @@ class App:
   def get_answer(self):
     return self.answer
   
+  def int2ascii(self, value):
+    return (ord('0') + value).to_bytes(1, 'little')
+
+  def send_read_slot(self, slot):
+    self.send('r', self.int2ascii(slot))
+
+  def send_write_slot(self, slot, value):
+    self.send('w', self.int2ascii(slot),  str(value))
+  
+  def send_increment_slot(self, slot):
+    self.send('i', self.int2ascii(slot))
+
